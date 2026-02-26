@@ -18,8 +18,8 @@ from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage
 from langgraph.prebuilt import create_react_agent
 
-from prompts.intent_interpreter_prompt import INTENT_INTERPRETER_SYSTEM_PROMPT
-from tools.intent_interpreter_tools import (
+from Prompts.intent_interpreter import INTENT_INTERPRETER_SYSTEM_PROMPT
+from Tools.intent_interpreter import (
     INTENT_INTERPRETER_TOOLS,
     init_intent_store,
     get_intent_store,
