@@ -5,7 +5,7 @@ from langchain_core.messages import HumanMessage
 from langgraph.prebuilt import create_react_agent
 
 from prompts.data_profiler_prompt import DATA_PROFILER_SYSTEM_PROMPT
-from Tools.data_profiler_tools import DATA_PROFILER_TOOLS, get_dataframe_store
+from custom_proj.Tools.data_profiler import DATA_PROFILER_TOOLS, get_dataframe_store
 from core.profiler_engine import profile_dataframe
 
 
