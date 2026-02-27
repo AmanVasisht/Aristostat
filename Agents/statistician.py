@@ -23,38 +23,24 @@ from typing import Any
 import pandas as pd
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage
-from langgraph.prebuilt import create_react_agent
 
-from prompts.statistician_prompt import STATISTICIAN_SYSTEM_PROMPT
-from tools.statistician_tools import (
+from Tools.statistician import (
     STATISTICIAN_TOOLS,
     init_statistician_store,
     get_statistician_store,
     get_fitted_model,
+    _statistician_store,
 )
 
 
 # ─────────────────────────────────────────────
-# LLM
+# LLM — used only for formatting the response
 # ─────────────────────────────────────────────
 
 model = ChatGroq(
     model="llama-3.1-8b-instant",
     temperature=0,
 )
-
-
-# ─────────────────────────────────────────────
-# AGENT FACTORY
-# ─────────────────────────────────────────────
-
-def create_statistician_agent():
-    """Create and return the Statistician ReAct agent."""
-    return create_react_agent(
-        model=model,
-        tools=STATISTICIAN_TOOLS,
-        prompt=STATISTICIAN_SYSTEM_PROMPT,
-    )
 
 
 # ─────────────────────────────────────────────
@@ -68,54 +54,71 @@ def run_statistician(
 ) -> dict[str, Any]:
     """
     Entry point called by the LangGraph orchestrator (main.py).
-
-    Args:
-        methodologist_output: MethodologistOutput dict — selected test + column roles.
-        cleaned_df:           Cleaned (and possibly rectified/transformed) DataFrame.
-        rectification_output: RectificationOutput dict if rectification was applied.
-                              Pass None if no assumption failures occurred.
-                              correction_type and new_test are read automatically.
-
-    Returns:
-        {
-          "messages":             Full LangGraph message history.
-          "final_response":       Human-readable results shown to user.
-          "statistician_output":  Raw StatisticianOutput dict for downstream agents.
-          "fitted_model":         The fitted model object in memory.
-                                  Pass this directly to run_model_critic().
-                                  None for non-parametric and correlation tests.
-        }
+    Calls the statistician engine directly — no LLM needed for test execution.
+    The LLM is only used to format the final human-readable response.
     """
+    from core.statistician_engine import run_test
+
     init_statistician_store(
         methodologist_output=methodologist_output,
         cleaned_df=cleaned_df,
         rectification_output=rectification_output,
     )
 
-    agent = create_statistician_agent()
-    content = "Please execute the statistical test and present the results."
+    # ── Resolve test parameters ──
+    rect      = rectification_output or {}
+    test_name = rect.get("new_test") or methodologist_output.get("selected_test")
+    dep_var   = methodologist_output.get("dependent_variable")
+    ind_vars  = methodologist_output.get("independent_variables", [])
+    grp_var   = methodologist_output.get("grouping_variable")
+    correction = rect.get("correction_type")
 
-    result = agent.invoke({"messages": [HumanMessage(content=content)]})
-
-    # ── Extract final human-readable response ──
+    # ── Execute test directly via engine ──
+    statistician_output = None
+    fitted_model = None
     final_response = ""
-    for msg in reversed(result["messages"]):
-        if hasattr(msg, "content") and msg.__class__.__name__ == "AIMessage":
-            final_response = msg.content
-            break
 
-    # ── Retrieve results from store ──
-    store = get_statistician_store()
-    statistician_output = store.get("statistician_output")
+    try:
+        output, fitted_model = run_test(
+            test_name=test_name,
+            df=cleaned_df,
+            dependent_var=dep_var,
+            independent_vars=ind_vars,
+            grouping_var=grp_var,
+            correction_type=correction,
+        )
+        _statistician_store["statistician_output"] = output
+        import Tools.statistician as _st
+        _st._fitted_model = fitted_model
+        statistician_output = output
+
+        result_json = output.model_dump_json(indent=2)
+        format_prompt = f"""You are presenting statistical results clearly.
+    Given these results, write a clear 3-5 sentence summary for the user.
+    Include: test name, key statistic, p-value, verdict, and brief plain English interpretation.
+    Do not add caveats or recommendations — just present the results.
+
+    Results:
+    {result_json}"""
+
+        response = model.invoke([HumanMessage(content=format_prompt)])
+        final_response = response.content.strip()
+
+    except Exception as e:
+        import traceback
+        print(f"[STATISTICIAN] ERROR: {str(e)}")
+        print(traceback.format_exc())       # ← shows full stack trace
+        final_response = f"Test execution failed: {str(e)}"
+
     statistician_output_dict = (
         statistician_output.model_dump() if statistician_output else {}
     )
 
     return {
-        "messages":            result["messages"],
+        "messages":            [],
         "final_response":      final_response,
         "statistician_output": statistician_output_dict,
-        "fitted_model":        get_fitted_model(),  # None for non-parametric tests
+        "fitted_model":        fitted_model,
     }
 
 

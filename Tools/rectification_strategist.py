@@ -10,7 +10,7 @@ import json
 import pandas as pd
 from langchain_core.tools import tool
 
-from schemas.rectification_schema import RectificationPhase
+from Schemas.rectification_strategist import RectificationPhase
 from core.rectification_engine import build_rectification_output, get_proposals_for_failures
 
 

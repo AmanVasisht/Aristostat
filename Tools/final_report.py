@@ -14,7 +14,7 @@ import pandas as pd
 from langchain_core.tools import tool
 
 from core.final_report_engine import assemble_report
-from schemas.final_report_schema import FinalReportOutput
+from Schemas.final_report import FinalReportOutput
 
 
 # ─────────────────────────────────────────────

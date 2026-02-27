@@ -20,8 +20,8 @@ Bypass validation rules:
 
 from itertools import combinations as _combinations
 
-from schemas.methodologist_schema import MethodologistOutput, SelectionMode
-from schemas.intent_schema import IntentOutput
+from Schemas.methodologist import MethodologistOutput, SelectionMode
+from Schemas.intent_interpreter import IntentOutput
 from Utils.test_requirements_registry import TEST_REQUIREMENTS
 
 # ─────────────────────────────────────────────
@@ -228,8 +228,8 @@ def decide_test(
         )
 
     # ── RELATIONSHIP / CORRELATION ──
-    if goal == "relationship":
-        if dep_dtype == "continuous" and all(d == "continuous" for d in ind_dtypes):
+    if goal in ("relationship", "prediction"):
+        if dep_dtype == "continuous" and all(d == "continuous" for d in ind_dtypes) and not grouping_var:
             if len(independent_vars) == 1:
                 return (
                     "Simple Linear Regression",
@@ -237,12 +237,18 @@ def decide_test(
                     f"('{dependent_var}') and one continuous predictor "
                     f"('{independent_vars[0]}')."
                 )
+            elif len(independent_vars) > 1:
+                return (
+                    "Multiple Linear Regression",
+                    f"Multiple Linear Regression selected — predicting '{dependent_var}' "
+                    f"from {len(independent_vars)} continuous predictors."
+                )
+            # Both continuous, no clear direction
             return (
                 "Pearson Correlation",
-                f"Pearson Correlation selected — examining the linear relationship "
-                f"between '{dependent_var}' and '{independent_vars[0]}'."
+                f"Pearson Correlation selected — both '{dependent_var}' and "
+                f"'{independent_vars[0]}' are continuous with no grouping variable."
             )
-
     # ── PREDICTION ──
     if goal == "prediction":
         if len(independent_vars) == 1:
@@ -259,23 +265,20 @@ def decide_test(
             )
 
     # ── INFERENCE ──
-    if goal == "inference" or (dep_dtype == "continuous" and grp_dtype == "categorical"):
+    if (goal == "inference" or (dep_dtype == "continuous" and grp_dtype == "categorical")) and grouping_var:
         if n_groups == 2:
             if n_rows >= 30:
                 return (
                     "Independent Samples T-Test",
                     f"Independent Samples T-Test selected — comparing '{dependent_var}' "
-                    f"across 2 groups in '{grouping_var}' "
-                    f"(n={n_rows}, sufficient for parametric test)."
+                    f"across 2 groups in '{grouping_var}' (n={n_rows})."
                 )
             else:
                 return (
                     "Mann-Whitney U Test",
                     f"Mann-Whitney U Test selected — comparing '{dependent_var}' "
-                    f"across 2 groups in '{grouping_var}' "
-                    f"(n={n_rows}, small sample — non-parametric preferred)."
+                    f"across 2 groups in '{grouping_var}' (n={n_rows}, small sample)."
                 )
-
         elif n_groups and n_groups >= 3:
             if n_rows >= 20:
                 return (
@@ -287,14 +290,12 @@ def decide_test(
                 return (
                     "Kruskal-Wallis Test",
                     f"Kruskal-Wallis Test selected — comparing '{dependent_var}' "
-                    f"across {n_groups} groups in '{grouping_var}' "
-                    f"(small sample — non-parametric preferred)."
+                    f"across {n_groups} groups in '{grouping_var}' (small sample)."
                 )
-
+        # Has grouping var but n_groups unclear — default inference test
         return (
             "Independent Samples T-Test",
-            f"Independent Samples T-Test selected as default inference test "
-            f"for '{dependent_var}'."
+            f"Independent Samples T-Test selected as default inference test for '{dependent_var}'."
         )
 
     # ── FALLBACK: Two continuous columns ──

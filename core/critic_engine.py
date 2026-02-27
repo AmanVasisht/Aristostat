@@ -19,9 +19,9 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from configs.post_test_assumptions import POST_TEST_ASSUMPTION_REGISTRY
-from schemas.assumption_checker_schema import AssumptionResult, AssumptionStatus
-from schemas.model_critic_schema import ModelCriticOutput
+from Utils.critic_requirements_registry import POST_TEST_ASSUMPTION_REGISTRY
+from Schemas.assumption_checker import AssumptionResult, AssumptionStatus
+from Schemas.critic import ModelCriticOutput
 
 
 # ─────────────────────────────────────────────

@@ -47,16 +47,50 @@ def load_csv(filepath: str) -> str:
 def run_profiler() -> str:
     """
     Run the full data profiling analysis on the currently loaded CSV.
-    Returns the complete ProfilerOutput as a JSON string.
+    Returns a slimmed ProfilerOutput as a JSON string.
     Must call load_csv first.
     """
     if "current" not in _dataframe_store:
         return "ERROR: No CSV loaded. Please call load_csv first."
     try:
         result = profile_dataframe(_dataframe_store["current"])
-        return result.model_dump_json(indent=2)
+        # Store full result internally for downstream agents
+        _dataframe_store["profiler_output"] = result
+        # Return slimmed version to LLM to stay within token limits
+        return json.dumps(_slim_profiler_output(result.model_dump()), indent=2)
     except Exception as e:
         return f"ERROR: Profiling failed — {str(e)}"
+
+
+def _slim_profiler_output(profiler: dict) -> dict:
+    """
+    Reduces token count of profiler output sent to LLM.
+    - Rounds floats to 4 decimal places
+    - Removes high-token fields not needed for summary
+    Full output is preserved in _dataframe_store for downstream agents.
+    """
+    for col in profiler.get("continuous_columns", []):
+        for k, v in col.items():
+            if isinstance(v, float):
+                col[k] = round(v, 3)
+        # Remove confidence interval raw values if present
+        col.pop("ci_lower", None)
+        col.pop("ci_upper", None)
+
+    for col in profiler.get("categorical_columns", []):
+        # These are the biggest token sinks — remove if present
+        col.pop("value_counts", None)
+        col.pop("top_values", None)
+        col.pop("unique_values", None)
+        if isinstance(col.get("mode_frequency"), float):
+            col["mode_frequency"] = round(col["mode_frequency"], 3)
+
+    # Remove raw warnings list if it's very long
+    warnings = profiler.get("warnings", [])
+    if len(warnings) > 5:
+        profiler["warnings"] = warnings[:5] + [f"... and {len(warnings)-5} more warnings"]
+
+    return profiler
 
 
 @tool
@@ -71,16 +105,15 @@ def get_column_names() -> str:
 
 
 @tool
-def get_sample_rows(n: int = 5) -> str:
+def get_sample_rows(n: int = 3) -> str:
     """
     Return the first n rows of the loaded CSV as a JSON string.
-    Useful for a quick sanity check on data types and formatting.
     Args:
-        n: Number of rows to return (default 5, max 20).
+        n: Number of rows to return (default 3, max 10).
     """
     if "current" not in _dataframe_store:
         return "ERROR: No CSV loaded. Please call load_csv first."
-    n = min(n, 20)
+    n = min(n, 10)  # reduced from 20
     return _dataframe_store["current"].head(n).to_json(orient="records", indent=2)
 
 

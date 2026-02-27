@@ -26,8 +26,8 @@ from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage
 from langgraph.prebuilt import create_react_agent
 
-from prompts.preprocessor_prompt import PREPROCESSOR_SYSTEM_PROMPT
-from tools.preprocessor_tools import (
+from Prompts.preprocessor import PREPROCESSOR_SYSTEM_PROMPT
+from Tools.preprocessor import (
     PREPROCESSOR_TOOLS,
     init_preprocessor_store,
     get_preprocessor_store,
@@ -38,6 +38,7 @@ from tools.preprocessor_tools import (
 # LLM
 # ─────────────────────────────────────────────
 
+from langchain_groq import ChatGroq
 model = ChatGroq(
     model="llama-3.1-8b-instant",
     temperature=0

@@ -10,7 +10,7 @@ import json
 import pandas as pd
 from langchain_core.tools import tool
 
-from schemas.methodologist_schema import MethodologistOutput
+from Schemas.methodologist import MethodologistOutput
 from core.statistician_engine import run_test
 
 

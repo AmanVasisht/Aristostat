@@ -23,8 +23,8 @@ from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage
 from langgraph.prebuilt import create_react_agent
 
-from prompts.final_report_prompt import FINAL_REPORT_SYSTEM_PROMPT
-from tools.final_report_tools import (
+from Prompts.final_report import FINAL_REPORT_SYSTEM_PROMPT
+from Tools.final_report import (
     FINAL_REPORT_TOOLS,
     init_report_store,
     get_report_store,
@@ -35,12 +35,8 @@ from tools.final_report_tools import (
 # LLM
 # ─────────────────────────────────────────────
 
-model = ChatGroq(
-    model="llama-3.3-70b-versatile",
-    temperature=0,
-)
-
-
+from langchain_groq import ChatGroq
+model = ChatGroq(model="meta-llama/llama-4-maverick-17b-128e-instruct", temperature=0)
 # ─────────────────────────────────────────────
 # AGENT FACTORY
 # ─────────────────────────────────────────────

@@ -99,27 +99,31 @@ def check_explicit_test_in_query() -> str:
     result = detect_explicit_test(query)
     return result if result else "None"
 
-
 @tool
 def parse_intent_from_llm(llm_parsed_json: str) -> str:
     """
-    Takes your structured interpretation of the user's intent as a JSON string
-    and validates + enriches it against the actual dataset columns.
+    Validates your structured interpretation against the actual dataset columns.
 
-    Expected JSON keys:
-        intent_type         : "explicit_test" | "column_relationship" | "open_ended"
-        analysis_goal       : "prediction" | "inference" | "dimensionality" |
-                              "relationship" | "distribution" | "unknown"
-        confidence          : "high" | "medium" | "low"
-        requested_test      : string or null  (only if intent_type is explicit_test)
-        columns             : list of {"name": str, "role": "dependent"|"independent"|"grouping"|"unspecified"}
-        all_columns_mode    : true | false  (true for open-ended queries with no specific columns)
-        interpretation_summary : plain English explanation of what you understood
-        clarification_needed   : true | false
-        clarification_question : string or null
+    CRITICAL — HOW TO CALL THIS TOOL:
+    You MUST pass a single argument named exactly 'llm_parsed_json' whose value
+    is your entire JSON as a STRING. Do NOT pass JSON keys as separate arguments.
 
-    Returns the final validated IntentOutput as a JSON string,
-    including any column warnings or invalid column names found.
+    Correct:   parse_intent_from_llm(llm_parsed_json='{\"intent_type\": ...}')
+    Wrong:     parse_intent_from_llm(intent_type="...", columns=[...])
+
+    Required keys in the JSON string:
+        intent_type            : "explicit_test" | "column_relationship" | "open_ended"
+        analysis_goal          : "prediction" | "inference" | "dimensionality" |
+                                 "relationship" | "distribution" | "unknown"
+        confidence             : "high" | "medium" | "low"
+        requested_test         : string or null
+        columns                : list of {"name": str, "role": "dependent"|"independent"|"grouping"|"unspecified"}
+        all_columns_mode       : true | false
+        interpretation_summary : plain English summary of what you understood
+        clarification_needed   : false
+        clarification_question : null
+
+    Returns the final validated IntentOutput as a JSON string.
     """
     profiler = _intent_store.get("profiler_output")
     query = _intent_store.get("original_query", "")
@@ -141,8 +145,6 @@ def parse_intent_from_llm(llm_parsed_json: str) -> str:
         _intent_store["intent_output"] = intent_output
         return intent_output.model_dump_json(indent=2)
     except ValueError as e:
-        # Hard error — invalid column name(s). Surface clearly so the agent
-        # stops and informs the user to correct their column reference.
         return f"FATAL_COLUMN_ERROR: {str(e)}"
     except Exception as e:
         return f"ERROR: Failed to build IntentOutput — {str(e)}"

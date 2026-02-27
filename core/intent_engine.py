@@ -14,7 +14,7 @@ Behaviour rules:
 
 from itertools import combinations as _combinations
 
-from schemas.intent_schema import (
+from Schemas.intent_interpreter import (
     IntentOutput,
     IntentType,
     AnalysisGoal,

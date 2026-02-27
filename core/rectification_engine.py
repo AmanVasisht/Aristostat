@@ -14,8 +14,8 @@ Responsibilities:
 import numpy as np
 import pandas as pd
 
-from configs.rectifications import RECTIFICATION_REGISTRY
-from schemas.rectification_schema import (
+from Utils.rectification_requirements_registry import RECTIFICATION_REGISTRY
+from Schemas.rectification_strategist import (
     RectificationOutput,
     RectificationPhase,
     NextStep,

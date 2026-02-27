@@ -4,8 +4,8 @@ from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage
 from langgraph.prebuilt import create_react_agent
 
-from prompts.data_profiler_prompt import DATA_PROFILER_SYSTEM_PROMPT
-from custom_proj.Tools.data_profiler import DATA_PROFILER_TOOLS, get_dataframe_store
+from Prompts.data_profiler import DATA_PROFILER_SYSTEM_PROMPT
+from Tools.data_profiler import DATA_PROFILER_TOOLS, get_dataframe_store
 from core.profiler_engine import profile_dataframe
 
 
@@ -13,13 +13,11 @@ from core.profiler_engine import profile_dataframe
 # LLM
 # ─────────────────────────────────────────────
 
+from langchain_groq import ChatGroq
 model = ChatGroq(
     model="llama-3.1-8b-instant",
     temperature=0
-)
-
-
-# ─────────────────────────────────────────────
+)# ─────────────────────────────────────────────
 # AGENT FACTORY
 # ─────────────────────────────────────────────
 
@@ -64,7 +62,6 @@ def run_data_profiler(filepath: str, user_message: str = None) -> dict[str, Any]
     )
 
     result = agent.invoke({"messages": [HumanMessage(content=content)]})
-
     # ── Extract final human-readable response ──
     final_response = ""
     for msg in reversed(result["messages"]):

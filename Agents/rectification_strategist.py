@@ -24,8 +24,8 @@ from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage
 from langgraph.prebuilt import create_react_agent
 
-from prompts.rectification_prompt import RECTIFICATION_STRATEGIST_SYSTEM_PROMPT
-from tools.rectification_tools import (
+from Prompts.rectification_strategist import RECTIFICATION_STRATEGIST_SYSTEM_PROMPT
+from Tools.rectification_strategist import (
     RECTIFICATION_TOOLS,
     init_rectification_store,
     get_rectification_store,
@@ -36,11 +36,11 @@ from tools.rectification_tools import (
 # LLM
 # ─────────────────────────────────────────────
 
+from langchain_groq import ChatGroq
 model = ChatGroq(
-    model="llama-3.1-8b-instant",
-    temperature=0,
+    model="qwen/qwen3-32b",
+    temperature=0
 )
-
 
 # ─────────────────────────────────────────────
 # AGENT FACTORY

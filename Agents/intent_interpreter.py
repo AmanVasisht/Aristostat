@@ -30,12 +30,11 @@ from Tools.intent_interpreter import (
 # LLM
 # ─────────────────────────────────────────────
 
+from langchain_groq import ChatGroq
 model = ChatGroq(
-    model="llama-3.1-8b-instant",
-    temperature=0
+    model="qwen/qwen3-32b",
+    temperature=0,
 )
-
-
 # ─────────────────────────────────────────────
 # AGENT FACTORY
 # ─────────────────────────────────────────────

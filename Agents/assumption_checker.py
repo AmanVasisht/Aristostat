@@ -20,8 +20,8 @@ from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage
 from langgraph.prebuilt import create_react_agent
 
-from prompts.assumption_checker_prompt import ASSUMPTION_CHECKER_SYSTEM_PROMPT
-from tools.assumption_checker_tools import (
+from Prompts.assumption_checker import ASSUMPTION_CHECKER_SYSTEM_PROMPT
+from Tools.assumption_checker import (
     ASSUMPTION_CHECKER_TOOLS,
     init_assumption_store,
     get_assumption_store,
@@ -31,9 +31,9 @@ from tools.assumption_checker_tools import (
 # ─────────────────────────────────────────────
 # LLM
 # ─────────────────────────────────────────────
-
+from langchain_groq import ChatGroq
 model = ChatGroq(
-    model="llama-3.1-8b-instant",
+    model="qwen/qwen3-32b",
     temperature=0
 )
 

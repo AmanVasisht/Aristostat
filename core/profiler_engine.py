@@ -10,12 +10,12 @@ import pandas as pd
 import numpy as np
 from scipy import stats
 
-from custom_proj.Schemas.data_profiler import (
+from Schemas.data_profiler import (
     ContinuousColumnProfile,
     CategoricalColumnProfile,
     ProfilerOutput,
 )
-from custom_proj.constants.data_profiler import DISGUISED_NULL_SYMBOLS, MISSING_LOW_THRESHOLD, MISSING_MODERATE_THRESHOLD, IQR_MULTIPLIER, SKEW_MODERATE, SKEW_HIGH, HIGH_CARDINALITY_THRESHOLD
+from constants.data_profiler import DISGUISED_NULL_SYMBOLS, MISSING_LOW_THRESHOLD, MISSING_MODERATE_THRESHOLD, IQR_MULTIPLIER, SKEW_MODERATE, SKEW_HIGH, HIGH_CARDINALITY_THRESHOLD
 
 
 

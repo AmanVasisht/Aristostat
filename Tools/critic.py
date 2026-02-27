@@ -9,7 +9,7 @@ import json
 import pandas as pd
 from langchain_core.tools import tool
 
-from core.model_critic_engine import run_post_test_checks
+from core.critic_engine import run_post_test_checks
 
 
 # ─────────────────────────────────────────────

@@ -21,8 +21,8 @@ from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage
 from langgraph.prebuilt import create_react_agent
 
-from prompts.model_critic_prompt import MODEL_CRITIC_SYSTEM_PROMPT
-from tools.model_critic_tools import (
+from Prompts.critic import MODEL_CRITIC_SYSTEM_PROMPT
+from Tools.critic import (
     MODEL_CRITIC_TOOLS,
     init_model_critic_store,
     get_model_critic_store,
@@ -33,12 +33,11 @@ from tools.model_critic_tools import (
 # LLM
 # ─────────────────────────────────────────────
 
+from langchain_groq import ChatGroq
 model = ChatGroq(
     model="llama-3.1-8b-instant",
-    temperature=0,
+    temperature=0
 )
-
-
 # ─────────────────────────────────────────────
 # AGENT FACTORY
 # ─────────────────────────────────────────────

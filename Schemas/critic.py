@@ -7,7 +7,7 @@ Assumption Checker schema — same structure, different checks.
 """
 
 from pydantic import BaseModel, Field
-from schemas.assumption_checker_schema import AssumptionResult, AssumptionStatus
+from Schemas.assumption_checker import AssumptionResult, AssumptionStatus
 
 
 class ModelCriticOutput(BaseModel):

@@ -12,7 +12,7 @@ Responsibilities:
   5. Returns FinalReportOutput (docx generation is done in tools layer via Node.js)
 """
 
-from schemas.final_report_schema import FinalReportOutput
+from Schemas.final_report import FinalReportOutput
 
 
 # ─────────────────────────────────────────────

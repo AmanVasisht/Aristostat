@@ -8,9 +8,9 @@ import json
 import pandas as pd
 from langchain_core.tools import tool
 
-from schemas.methodologist_schema import MethodologistOutput
+from Schemas.methodologist import MethodologistOutput
 from core.assumption_engine import run_assumption_checks
-from configs.assumptions import ASSUMPTION_REGISTRY
+from Utils.assumptions_requirements_registry import ASSUMPTION_REGISTRY
 
 
 # ─────────────────────────────────────────────

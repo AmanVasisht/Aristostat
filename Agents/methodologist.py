@@ -18,8 +18,8 @@ from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage
 from langgraph.prebuilt import create_react_agent
 
-from prompts.methodologist_prompt import METHODOLOGIST_SYSTEM_PROMPT
-from tools.methodologist_tools import (
+from Prompts.methodologist import METHODOLOGIST_SYSTEM_PROMPT
+from Tools.methodologist import (
     METHODOLOGIST_TOOLS,
     init_methodologist_store,
     get_methodologist_store,
@@ -30,11 +30,8 @@ from tools.methodologist_tools import (
 # LLM
 # ─────────────────────────────────────────────
 
-model = ChatGroq(
-    model="llama-3.1-8b-instant",
-    temperature=0
-)
-
+from langchain_groq import ChatGroq
+model = ChatGroq(model="meta-llama/llama-4-maverick-17b-128e-instruct", temperature=0)
 
 # ─────────────────────────────────────────────
 # AGENT FACTORY

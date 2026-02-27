@@ -9,7 +9,7 @@ run the decision engine, and produce a MethodologistOutput.
 import json
 from langchain_core.tools import tool
 
-from schemas.intent_schema import IntentOutput
+from Schemas.intent_interpreter import IntentOutput
 from core.methodologist_engine import build_methodologist_output
 
 
