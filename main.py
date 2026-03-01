@@ -655,34 +655,31 @@ def node_final_report(state: AristostatState) -> AristostatState:
     print(f"[NODE: final_report] critic_output present: {state.get('critic_output') is not None}")
     print(f"[NODE: final_report] rectification_output present: {state.get('rectification_output') is not None}")
     
+    try:
+        result = run_final_report(
+            original_query=state["user_query"],
+            profiler_output=state["profiler_output"],
+            preprocessor_output=state["preprocessor_output"],
+            methodologist_output=state["methodologist_output"],
+            checker_output=state["checker_output"],
+            statistician_output=state["statistician_output"],
+            rectification_output=state.get("rectification_output"),
+            critic_output=state.get("critic_output"),
+        )
 
-    result = run_final_report(
-        original_query=state["user_query"],
-        profiler_output=state["profiler_output"],
-        preprocessor_output=state["preprocessor_output"],
-        methodologist_output=state["methodologist_output"],
-        checker_output=state["checker_output"],
-        statistician_output=state["statistician_output"],
-        rectification_output=state.get("rectification_output"),
-        critic_output=state.get("critic_output"),
-    )
+        print(f"[NODE: final_report] report_output keys: {list(result.get('report_output', {}).keys())}")
+        report_serialized = _serialize_output(result["report_output"])
+        # ── Final report display ──
+        print(f"[NODE: final_report] result keys: {list(result.keys())}")
+        print(f"[NODE: final_report] report_output: {result.get('report_output')}")
+        print(f"[NODE: final_report] report_serialized keys: {list(report_serialized.keys())}")
+        return {**state, "report_output": report_serialized}
 
-    print(f"[NODE: final_report] report_output keys: {list(result.get('report_output', {}).keys())}")
-    report_serialized = _serialize_output(result["report_output"])
-    # ── Final report display ──
-    if state:
-        print(f"\nDEBUG final state keys: {list(state.keys())}")
-        report = state.get("report_output", {})
-        print(f"DEBUG report_output: {report}")
-        if report and report.get("docx_path"):
-            print(f"\nSUCCESS: Analysis complete.")
-            print(f"Report Location: {report.get('docx_path')}")
-        elif report and report.get("markdown_report"):
-            print(f"\nSUCCESS: Analysis complete.")
-            print(f"\n{report.get('markdown_report')}")
-        if state.get("fatal_error"):
-            print(f"\nPIPELINE STOPPED: {state['fatal_error']}")
-    return {**state, "report_output": report_serialized}
+    except Exception as e:
+        import traceback
+        print(f"[NODE: final_report] ERROR: {str(e)}")
+        print(traceback.format_exc())
+    return {**state, "report_output": {}, "fatal_error": str(e)}
 
 
 # ─────────────────────────────────────────────
