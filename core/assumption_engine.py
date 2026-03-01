@@ -271,7 +271,16 @@ def check_multicollinearity_vif(
         )
 
     try:
-        X = df[independent_vars].dropna()
+        X = df[independent_vars].copy()
+        cat_cols = X.select_dtypes(include=["object", "category"]).columns.tolist()
+        if cat_cols:
+            X = pd.get_dummies(X, columns=cat_cols, drop_first=True)
+            bool_cols = X.select_dtypes(include="bool").columns.tolist()
+            if bool_cols:
+                X[bool_cols] = X[bool_cols].astype(int)
+        X = X.apply(pd.to_numeric, errors="coerce").dropna()
+        # Update independent_vars to encoded column names for VIF loop
+        independent_vars = X.columns.tolist()
         vif_scores: dict[str, float] = {}
 
         for i, col in enumerate(independent_vars):

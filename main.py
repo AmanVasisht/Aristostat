@@ -294,15 +294,46 @@ def node_methodologist_confirm(state: AristostatState) -> AristostatState:
 
     user_response = interrupt({
         "message": state.get("_methodologist_response", ""),
-        "prompt":  "Shall I proceed with this test? (yes/no)",
+        "prompt":  "Shall I proceed with this test? (yes/no, or describe the test you want)",
         "type":    "confirm",
     })
 
-    if str(user_response).strip().lower() not in ("yes", "y"):
+    user_input = str(user_response).strip().lower()
+
+    # ── User confirmed ──
+    if user_input in ("yes", "y"):
+        return state
+
+    # ── User said no with no correction — stop ──
+    if user_input in ("no", "n"):
         print("[NODE: methodologist_confirm] User stopped pipeline.")
         return {**state, "fatal_error": "User stopped pipeline after test selection."}
 
-    return state
+    # ── User gave a correction — re-run methodologist with their input ──
+    print(f"[NODE: methodologist_confirm] User corrected: {user_response}")
+    from Agents.methodologist import run_methodologist
+
+    # Build a corrected intent that includes the user's requested test
+    corrected_intent = {
+        **state.get("intent_output", {}),
+        "requested_test":      str(user_response),
+        "methodologist_bypass": True,
+        "intent_type":         "explicit_test",
+    }
+
+    corrected_result = run_methodologist(
+        intent_output=corrected_intent,
+        profiler_output=state["profiler_output"],
+    )
+
+    corrected_methodologist = _serialize_output(corrected_result["methodologist_output"])
+    print(f"[NODE: methodologist_confirm] corrected test: {corrected_methodologist.get('selected_test')}")
+
+    return {
+        **state,
+        "methodologist_output":    corrected_methodologist,
+        "_methodologist_response": corrected_result["final_response"],
+    }
 
 
 # ── PREPROCESSOR ──

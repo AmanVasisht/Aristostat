@@ -77,6 +77,22 @@ def _correlation_strength(r: float) -> str:
         return "moderate"
     return "weak"
 
+def _encode_features(df: pd.DataFrame, independent_vars: list[str]) -> pd.DataFrame:
+    """
+    Encodes categorical columns as dummy variables for regression and PCA.
+    drop_first=True avoids multicollinearity.
+    Bool dummies converted to int for statsmodels/sklearn compatibility.
+    """
+    X = df[independent_vars].copy()
+    cat_cols = X.select_dtypes(include=["object", "category"]).columns.tolist()
+    if cat_cols:
+        X = pd.get_dummies(X, columns=cat_cols, drop_first=True)
+        bool_cols = X.select_dtypes(include="bool").columns.tolist()
+        if bool_cols:
+            X[bool_cols] = X[bool_cols].astype(int)
+    X = X.apply(pd.to_numeric, errors="coerce")
+    return X
+
 
 # ─────────────────────────────────────────────
 # INFERENCE TESTS
@@ -394,10 +410,19 @@ def run_ols_regression(
     from statsmodels.regression.linear_model import OLS
     from statsmodels.tools import add_constant
 
-    X = df[independent_vars].dropna()
+    X = _encode_features(df, independent_vars).dropna()
     y = df[dependent_var].loc[X.index]
+    # ── Guard: too many parameters for available rows ──
+    n_obs    = len(X)
+    n_params = X.shape[1] + 1  # +1 for constant
+    if n_obs <= n_params:
+        raise ValueError(
+            f"Model has {n_params} parameters (after encoding categoricals as dummies) "
+            f"but only {n_obs} observations. Not enough degrees of freedom to fit. "
+            f"Remove some predictors or collect more data."
+        )
     X_const = add_constant(X)
-
+    
     model = OLS(y, X_const).fit()
 
     # Apply correction if requested
@@ -465,7 +490,7 @@ def run_ridge_regression(
     from sklearn.preprocessing import StandardScaler
     from sklearn.pipeline import Pipeline
 
-    X = df[independent_vars].dropna()
+    X = _encode_features(df, independent_vars).dropna()
     y = df[dependent_var].loc[X.index]
 
     pipeline = Pipeline([
@@ -523,7 +548,7 @@ def run_lasso_regression(
     from sklearn.preprocessing import StandardScaler
     from sklearn.pipeline import Pipeline
 
-    X = df[independent_vars].dropna()
+    X = _encode_features(df, independent_vars).dropna()
     y = df[dependent_var].loc[X.index]
 
     pipeline = Pipeline([
@@ -667,9 +692,9 @@ def run_pca(
     from sklearn.decomposition import PCA
     from sklearn.preprocessing import StandardScaler
 
-    X = df[independent_vars].dropna()
-    X_scaled = StandardScaler().fit_transform(X)
-
+    X_encoded = _encode_features(df, independent_vars).dropna()
+    X_scaled = StandardScaler().fit_transform(X_encoded)
+    
     pca = PCA()
     pca.fit(X_scaled)
 

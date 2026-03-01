@@ -1,54 +1,31 @@
 """
 FILE: agents/model_critic.py
 ------------------------------
-Model Critic agent — wires together all components and exposes
-the public run_model_critic() entry point for the LangGraph orchestrator.
+Model Critic agent — direct engine call, no ReAct agent.
+LLM used only for formatting the final response.
 
 Imports:
-  - LLM model
-  - Prompt   ← prompts/model_critic_prompt.py
-  - Tools    ← tools/model_critic_tools.py
-  - Engine   ← core/model_critic_engine.py  (called via tools)
-  - Config   ← configs/post_test_assumptions.py
+  - Engine   ← core/model_critic_engine.py (called directly)
   - Schemas  ← schemas/model_critic_schema.py
 """
 
 from typing import Any
 
-import numpy as np
 import pandas as pd
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage
-from langgraph.prebuilt import create_react_agent
 
-from Prompts.critic import MODEL_CRITIC_SYSTEM_PROMPT
-from Tools.critic import (
-    MODEL_CRITIC_TOOLS,
-    init_model_critic_store,
-    get_model_critic_store,
-)
+from core.critic_engine import run_post_test_checks
 
 
 # ─────────────────────────────────────────────
-# LLM
+# LLM — used only for formatting the response
 # ─────────────────────────────────────────────
 
-from langchain_groq import ChatGroq
 model = ChatGroq(
     model="llama-3.1-8b-instant",
-    temperature=0
+    temperature=0,
 )
-# ─────────────────────────────────────────────
-# AGENT FACTORY
-# ─────────────────────────────────────────────
-
-def create_model_critic_agent():
-    """Create and return the Model Critic ReAct agent."""
-    return create_react_agent(
-        model=model,
-        tools=MODEL_CRITIC_TOOLS,
-        prompt=MODEL_CRITIC_SYSTEM_PROMPT,
-    )
 
 
 # ─────────────────────────────────────────────
@@ -63,6 +40,8 @@ def run_model_critic(
 ) -> dict[str, Any]:
     """
     Entry point called by the LangGraph orchestrator (main.py).
+    Calls model_critic_engine directly — no ReAct agent.
+    LLM used only to format the human-readable response.
 
     Args:
         statistician_output:  StatisticianOutput dict — test results + test_family.
@@ -74,7 +53,7 @@ def run_model_critic(
 
     Returns:
         {
-          "messages":          Full LangGraph message history.
+          "messages":          Empty list (no agent messages).
           "final_response":    Human-readable post-test check summary shown to user.
           "critic_output":     Raw ModelCriticOutput dict for orchestrator routing.
                                Key fields:
@@ -83,91 +62,40 @@ def run_model_critic(
                                  - proceed_to_final_report: True if safe to proceed
         }
     """
-    init_model_critic_store(
+    critic_output = run_post_test_checks(
         statistician_output=statistician_output,
         fitted_model=fitted_model,
         cleaned_df=cleaned_df,
         methodologist_output=methodologist_output,
     )
 
-    agent = create_model_critic_agent()
-    content = "Please run post-test model checks and present the results to the user."
+    critic_output_dict = critic_output.model_dump()
 
-    result = agent.invoke({"messages": [HumanMessage(content=content)]})
+    # ── Format response via LLM ──
+    if not critic_output.checks_applicable:
+        final_response = (
+            f"Post-test model checks are not applicable for "
+            f"{statistician_output.get('test_name', 'this test')}. "
+            f"Proceeding to final report."
+        )
+    else:
+        format_prompt = f"""Format these post-test model check results clearly for the user.
+Use ✅ for passed, ❌ for failed, ⚠️ for warnings.
+For each check show: name, method used, key statistic, and plain English verdict.
+End with a clear summary of how many passed/failed and what action is recommended.
 
-    # ── Extract final human-readable response ──
-    final_response = ""
-    for msg in reversed(result["messages"]):
-        if hasattr(msg, "content") and msg.__class__.__name__ == "AIMessage":
-            final_response = msg.content
-            break
+Results:
+{critic_output.summary_message}
 
-    # ── Retrieve critic output from store ──
-    store = get_model_critic_store()
-    critic_output = store.get("critic_output")
-    critic_output_dict = critic_output.model_dump() if critic_output else {}
+Has failures: {critic_output.has_failures}
+Failed count: {critic_output.failed_count}
+Warning count: {critic_output.warning_count}"""
+
+        response = model.invoke([HumanMessage(content=format_prompt)])
+        final_response = response.content.strip()
 
     return {
-        "messages":       result["messages"],
+        "messages":       [],
         "final_response": final_response,
         "critic_output":  critic_output_dict,
     }
-
-
-# ─────────────────────────────────────────────
-# STANDALONE TEST RUNNER
-# Usage: python agents/model_critic.py
-# ─────────────────────────────────────────────
-
-# if __name__ == "__main__":
-#     from statsmodels.regression.linear_model import OLS
-#     from statsmodels.tools import add_constant
-
-#     # ── Mock regression data ──
-#     np.random.seed(42)
-#     n = 150
-#     experience = np.random.uniform(1, 20, n)
-#     salary = 30000 + 2000 * experience + np.random.normal(0, 5000, n)
-
-#     mock_df = pd.DataFrame({"salary": salary, "experience": experience})
-
-#     # ── Fit a real OLS model for testing ──
-#     X = add_constant(mock_df[["experience"]])
-#     fitted = OLS(mock_df["salary"], X).fit()
-
-#     mock_statistician_output = {
-#         "test_name":   "Simple Linear Regression",
-#         "test_family": "regression",
-#         "n_observations": n,
-#         "correction_applied": None,
-#         "model_available_in_memory": True,
-#         "columns_used": {"dependent": "salary", "independent": "experience"},
-#     }
-
-#     mock_methodologist_output = {
-#         "selected_test":         "Simple Linear Regression",
-#         "selection_mode":        "decided",
-#         "dependent_variable":    "salary",
-#         "independent_variables": ["experience"],
-#         "grouping_variable":     None,
-#         "n_rows":                n,
-#         "reasoning":             "SLR selected.",
-#         "original_query":        "Does experience predict salary?",
-#     }
-
-#     print("\n" + "=" * 60)
-#     print("  ARISTOSTAT — Model Critic Agent")
-#     print("=" * 60 + "\n")
-
-#     output = run_model_critic(
-#         statistician_output=mock_statistician_output,
-#         fitted_model=fitted,
-#         cleaned_df=mock_df,
-#         methodologist_output=mock_methodologist_output,
-#     )
-
-#     print(output["final_response"])
-#     print("\n" + "=" * 60)
-#     print("Has failures:          ", output["critic_output"].get("has_failures"))
-#     print("Proceed to final report:", output["critic_output"].get("proceed_to_final_report"))
-#     print("Checks applicable:     ", output["critic_output"].get("checks_applicable"))

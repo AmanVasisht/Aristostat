@@ -24,41 +24,18 @@ from typing import Any
 import pandas as pd
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage
-from langgraph.prebuilt import create_react_agent
 
-from Prompts.preprocessor import PREPROCESSOR_SYSTEM_PROMPT
-from Tools.preprocessor import (
-    PREPROCESSOR_TOOLS,
-    init_preprocessor_store,
-    get_preprocessor_store,
-)
+from core.preprocessor_engine import preprocess_dataframe
 
 
 # ─────────────────────────────────────────────
-# LLM
+# LLM — used only for formatting the summary
 # ─────────────────────────────────────────────
 
-from langchain_groq import ChatGroq
 model = ChatGroq(
     model="llama-3.1-8b-instant",
-    temperature=0
+    temperature=0,
 )
-
-
-# ─────────────────────────────────────────────
-# AGENT FACTORY
-# ─────────────────────────────────────────────
-
-def create_preprocessor_agent():
-    """
-    Create and return the Preprocessor ReAct agent.
-    Called fresh per invocation to avoid stale state.
-    """
-    return create_react_agent(
-        model=model,
-        tools=PREPROCESSOR_TOOLS,
-        prompt=PREPROCESSOR_SYSTEM_PROMPT
-    )
 
 
 # ─────────────────────────────────────────────
@@ -71,53 +48,43 @@ def run_preprocessor(
 ) -> dict[str, Any]:
     """
     Entry point called by the LangGraph orchestrator (main.py).
-
-    Args:
-        raw_df:          The original raw DataFrame loaded from the user's CSV.
-        profiler_output: The ProfilerOutput dict from the Data Profiler agent.
-
-    Returns:
-        {
-          "messages":             Full LangGraph message history.
-          "final_response":       Human-readable cleaning summary shown to user.
-          "preprocessor_output":  Raw PreprocessorOutput dict for LangGraph state.
-                                  Includes cleaned_data_json for state serialization.
-          "cleaned_df":           The actual cleaned pd.DataFrame for direct use
-                                  by the next agent in the same process.
-        }
+    Calls the preprocessor engine directly — no LLM needed for cleaning.
+    The LLM is only used to format the final human-readable summary.
     """
-    init_preprocessor_store(
-        raw_df=raw_df,
+    cleaned_df, preprocessor_output = preprocess_dataframe(
+        df=raw_df,
         profiler_output=profiler_output,
     )
 
-    agent = create_preprocessor_agent()
+    preprocessor_output_dict = preprocessor_output.model_dump()
 
-    content = "Please clean and preprocess the dataset so it is ready for analysis."
+    # ── Format human-readable summary via LLM ──
+    changes = preprocessor_output.changes_summary
+    warnings = preprocessor_output.warnings
+    fatal = preprocessor_output.fatal_error
 
-    result = agent.invoke({"messages": [HumanMessage(content=content)]})
+    if fatal:
+        final_response = f"⚠️ Fatal error during preprocessing: {fatal}"
+    elif not changes:
+        final_response = "Your data required no cleaning — it is already in good shape."
+    else:
+        summary_prompt = f"""Summarize these data cleaning steps in 3-5 plain English sentences for a non-technical user.
+Be concise. List what was done and the final dataset shape.
 
-    # ── Extract final human-readable response ──
-    final_response = ""
-    for msg in reversed(result["messages"]):
-        if hasattr(msg, "content") and msg.__class__.__name__ == "AIMessage":
-            final_response = msg.content
-            break
+Changes made: {changes}
+Warnings: {warnings}
+Original shape: {preprocessor_output.original_shape}
+Final shape: {preprocessor_output.final_shape}
+Rows dropped: {preprocessor_output.rows_dropped_total}"""
 
-    # ── Retrieve results from store ──
-    store = get_preprocessor_store()
-    preprocessor_output = store.get("preprocessor_output")
-    cleaned_df = store.get("cleaned_df")
-
-    preprocessor_output_dict = (
-        preprocessor_output.model_dump() if preprocessor_output else {}
-    )
+        response = model.invoke([HumanMessage(content=summary_prompt)])
+        final_response = response.content.strip()
 
     return {
-        "messages":            result["messages"],
+        "messages":            [],
         "final_response":      final_response,
         "preprocessor_output": preprocessor_output_dict,
-        "cleaned_df":          cleaned_df,      # pd.DataFrame — pass directly to next agent
+        "cleaned_df":          cleaned_df,
     }
 
 
