@@ -446,16 +446,22 @@ def run_ols_regression(
         model = model.get_robustcov_results(cov_type="HAC", use_t=True, maxlags=1)
 
     coefficients = []
+    ci = np.asarray(model.conf_int())
+    
+    params = np.asarray(model.params)
+    bse = np.asarray(model.bse)
+    tvalues = np.asarray(model.tvalues)
+    pvalues = np.asarray(model.pvalues)
     for i, name in enumerate(["const"] + independent_vars):
-        ci = model.conf_int().iloc[i]
+        lower, upper = ci[i]
         coefficients.append(Coefficient(
             variable=name,
-            estimate=round(float(model.params.iloc[i]), 6),
-            std_error=round(float(model.bse.iloc[i]), 6),
-            t_statistic=round(float(model.tvalues.iloc[i]), 4),
-            p_value=round(float(model.pvalues.iloc[i]), 4),
-            ci_lower=round(float(ci.iloc[0]), 6),
-            ci_upper=round(float(ci.iloc[1]), 6),
+            estimate=round(float(params[i]), 6),
+            std_error=round(float(bse[i]), 6),
+            t_statistic=round(float(tvalues[i]), 4),
+            p_value=round(float(pvalues[i]), 4),
+            ci_lower=round(float(lower), 6),
+            ci_upper=round(float(upper), 6),
         ))
 
     n_sig = sum(1 for c in coefficients[1:] if c.p_value and c.p_value < DEFAULT_ALPHA)
@@ -512,7 +518,8 @@ def run_ridge_regression(
         ("ridge", Ridge(alpha=alpha_reg)),
     ])
     pipeline.fit(X, y)
-
+    encoded_vars = X.columns.tolist()
+    pipeline._aristostat_feature_names = encoded_vars
     ridge_model = pipeline.named_steps["ridge"]
     scaler      = pipeline.named_steps["scaler"]
 
@@ -557,26 +564,35 @@ def run_lasso_regression(
     independent_vars: list[str],
     alpha_reg: float = 1.0,
 ) -> tuple[StatisticianOutput, object]:
-    """Lasso Regression using sklearn. Returns (output, fitted_model)."""
-    from sklearn.linear_model import Lasso
+    from sklearn.linear_model import LassoCV
     from sklearn.preprocessing import StandardScaler
     from sklearn.pipeline import Pipeline
 
     X = _encode_features(df, independent_vars).dropna()
     y = df[dependent_var].loc[X.index]
 
+    # ── Use encoded column names, not original — they differ after get_dummies ──
+    encoded_vars = X.columns.tolist()
+
+    
     pipeline = Pipeline([
-        ("scaler", StandardScaler()),
-        ("lasso", Lasso(alpha=alpha_reg, max_iter=10000)),
-    ])
+    ("scaler", StandardScaler()),  # scaler normalises coefficients first
+    ("lasso", LassoCV(cv=5, max_iter=10000)),
+])
     pipeline.fit(X, y)
 
     lasso_model = pipeline.named_steps["lasso"]
+    alpha_reg   = round(float(lasso_model.alpha_), 6)
+    pipeline.fit(X, y)
+    pipeline._aristostat_feature_names = encoded_vars
+    lasso_model = pipeline.named_steps["lasso"]
+
+    # Zip against encoded_vars — correct length match
     coefficients = [
         Coefficient(variable=var, estimate=round(float(coef), 6))
-        for var, coef in zip(independent_vars, lasso_model.coef_)
+        for var, coef in zip(encoded_vars, lasso_model.coef_)
     ]
-    selected = [v for v, c in zip(independent_vars, lasso_model.coef_) if abs(c) > 1e-6]
+    selected = [v for v, c in zip(encoded_vars, lasso_model.coef_) if abs(c) > 1e-6]
 
     y_pred = pipeline.predict(X)
     ss_res = float(np.sum((y - y_pred) ** 2))
@@ -586,7 +602,7 @@ def run_lasso_regression(
 
     interpretation = (
         f"Lasso Regression (alpha={alpha_reg}): R²={r2}, RMSE={rmse}. "
-        f"{len(selected)} of {len(independent_vars)} features retained: {selected}."
+        f"{len(selected)} of {len(encoded_vars)} features retained: {selected}."
     )
 
     result = RegressionResult(
@@ -604,10 +620,9 @@ def run_lasso_regression(
         regression_result=result,
         n_observations=len(y),
         columns_used={"dependent": dependent_var,
-                      "independent": ", ".join(independent_vars)},
+                      "independent": ", ".join(encoded_vars)},  # encoded names here too
         model_available_in_memory=True,
     ), pipeline
-
 
 # ─────────────────────────────────────────────
 # CORRELATION TESTS

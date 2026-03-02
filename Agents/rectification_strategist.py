@@ -1,20 +1,22 @@
 """
 FILE: agents/rectification_strategist.py
 ------------------------------------------
-Rectification Strategist agent — wires together all components and exposes
-the public run_rectification_strategist() entry point for the LangGraph orchestrator.
+Rectification Strategist — proper ReAct agent.
 
-Reused for both pre-test failures (called from Assumption Checker route)
-and post-test failures (called from Model Critic route).
-The phase flag distinguishes the two contexts.
+Architecture:
+  - Tools do ALL data fetching (VIF scores, proposals, column resolution, apply)
+  - LLM reasons over tool outputs and decides what to recommend
+  - LLM never invents data — it only reasons over what tools return
+  - ReAct loop: Thought → Tool call → Observation → Thought → ...
 
-Imports:
-  - LLM model
-  - Prompt   ← prompts/rectification_prompt.py
-  - Tools    ← tools/rectification_tools.py
-  - Engine   ← core/rectification_engine.py  (called via tools)
-  - Config   ← configs/rectifications.py
-  - Schemas  ← schemas/rectification_schema.py
+Tool call sequence the agent follows:
+  1. check_attempt_limit      → know if we're at max attempts
+  2. get_failure_context      → which assumptions failed, column roles, n_rows
+  3. get_violation_details    → exact VIF scores, statistics — the reasoning fuel
+  4. get_proposed_solutions   → fetch options from RECTIFICATION_REGISTRY
+  5. (present recommendation + all options to user — this happens in confirm node)
+  6. resolve_columns_to_drop  → if user chose drop, parse their free text
+  7. apply_chosen_solution    → apply the solution
 """
 
 from typing import Any
@@ -36,18 +38,14 @@ from Tools.rectification_strategist import (
 # LLM
 # ─────────────────────────────────────────────
 
-from langchain_groq import ChatGroq
-model = ChatGroq(
-    model="qwen/qwen3-32b",
-    temperature=0
-)
+model = ChatGroq(model="qwen/qwen3-32b", temperature=0)
+
 
 # ─────────────────────────────────────────────
 # AGENT FACTORY
 # ─────────────────────────────────────────────
 
 def create_rectification_agent():
-    """Create and return the Rectification Strategist ReAct agent."""
     return create_react_agent(
         model=model,
         tools=RECTIFICATION_TOOLS,
@@ -61,41 +59,30 @@ def create_rectification_agent():
 
 def run_rectification_strategist(
     failed_assumptions: list[str],
-    phase: str,                         # "pre_test" | "post_test"
+    phase: str,
     cleaned_df: pd.DataFrame,
     methodologist_output: dict,
     rectification_attempt: int = 1,
     max_attempts: int = 3,
+    checker_output: dict | None = None,
+    critic_output: dict | None = None,
 ) -> dict[str, Any]:
     """
-    Entry point called by the LangGraph orchestrator (main.py).
-    Called when Assumption Checker OR Model Critic finds failures.
+    ReAct agent entry point.
 
-    Args:
-        failed_assumptions:   List of assumption names that failed.
-        phase:                "pre_test" (from Assumption Checker) or
-                              "post_test" (from Model Critic).
-        cleaned_df:           Current working DataFrame (may have been
-                              transformed in a previous rectification attempt).
-        methodologist_output: MethodologistOutput dict — used for column roles.
-        rectification_attempt: Which attempt this is (incremented by orchestrator).
-        max_attempts:         Maximum rectification loops allowed (default 3).
+    The agent uses tools to fetch real data (VIF scores, proposals, statistics)
+    and reasons over that data to produce a recommendation.
+    Nothing is hallucinated — all numbers come from tool returns.
 
     Returns:
         {
-          "messages":              Full LangGraph message history.
-          "final_response":        Human-readable summary shown to user.
-          "rectification_output":  Raw RectificationOutput dict.
-                                   Key fields:
-                                     - next_step: "assumption_checker" | "statistician"
-                                     - new_test:  set if test was switched
-                                     - correction_type: set if correction applied
-                                     - applied_transforms: list of data changes
-                                     - user_accepted_violation: bool
-          "rectified_df":          Updated pd.DataFrame after applying solution.
-                                   Pass this to the next agent instead of original df.
+          "messages":              Full ReAct message history.
+          "final_response":        Agent's recommendation + all options, shown to user.
+          "rectification_output":  RectificationOutput dict with proposed_solutions.
+          "rectified_df":          DataFrame (unchanged at this stage — apply happens in confirm node).
         }
     """
+    # ── Initialise store — tools read from this ──
     init_rectification_store(
         failed_assumptions=failed_assumptions,
         phase=phase,
@@ -103,37 +90,68 @@ def run_rectification_strategist(
         methodologist_output=methodologist_output,
         rectification_attempt=rectification_attempt,
         max_attempts=max_attempts,
+        checker_output=checker_output or {},
+        critic_output=critic_output or {},
     )
 
     agent = create_rectification_agent()
 
+    # The agent's task: use tools to understand the situation and produce a recommendation.
+    # It does NOT apply a solution here — that happens after the user confirms in main.py.
     content = (
-        f"Assumption failures detected during {'pre-test' if phase == 'pre_test' else 'post-test'} "
-        f"checking. Please propose rectification solutions to the user."
+        f"Assumption failures detected during "
+        f"{'pre-test' if phase == 'pre_test' else 'post-test'} checking.\n\n"
+        f"Your task:\n"
+        f"1. Call check_attempt_limit to check if we are at max attempts.\n"
+        f"2. Call get_failure_context to understand which assumptions failed.\n"
+        f"3. Call get_violation_details to get exact statistics (VIF scores, p-values, etc.).\n"
+        f"4. Call get_proposed_solutions to get the available options from the registry.\n"
+        f"5. Reason over the real data from the tools — do NOT invent numbers.\n"
+        f"6. Present your recommendation with 'I recommend Option N because [specific reason "
+        f"tied to actual values from tools]', followed by all options.\n\n"
+        f"Do NOT call apply_chosen_solution or resolve_columns_to_drop yet — "
+        f"wait for the user to confirm their choice."
     )
 
     result = agent.invoke({"messages": [HumanMessage(content=content)]})
 
-    # ── Extract final human-readable response ──
+    # ── Extract final response from last AIMessage ──
     final_response = ""
     for msg in reversed(result["messages"]):
         if hasattr(msg, "content") and msg.__class__.__name__ == "AIMessage":
-            final_response = msg.content
-            break
+            if msg.content and not getattr(msg, "tool_calls", None):
+                final_response = msg.content
+                break
 
-    # ── Retrieve results from store ──
+    # ── Pull rectification_output from store (proposals only, no solution applied yet) ──
     store = get_rectification_store()
-    rectification_output = store.get("rectification_output")
-    rectified_df = store.get("cleaned_df")          # may be transformed
+    rect_output = store.get("rectification_output")
+    rect_output_dict = rect_output.model_dump() if rect_output else {}
 
-    rectification_output_dict = (
-        rectification_output.model_dump() if rectification_output else {}
-    )
+    # If agent didn't call apply_chosen_solution, rect_output may be None.
+    # Build proposals-only output so confirm node has the solution list.
+    if not rect_output_dict.get("proposed_solutions"):
+        from Schemas.rectification_strategist import RectificationPhase as RP
+        from core.rectification_engine import build_rectification_output
+        try:
+            ph = RP(phase)
+        except ValueError:
+            ph = RP.PRE_TEST
+        _, proposals_output = build_rectification_output(
+            failed_assumptions=failed_assumptions,
+            phase=ph,
+            chosen_solution_id=None,
+            df=cleaned_df,
+            dependent_var=methodologist_output.get("dependent_variable"),
+            independent_vars=methodologist_output.get("independent_variables", []).copy(),
+            rectification_attempt=rectification_attempt,
+            max_attempts=max_attempts,
+        )
+        rect_output_dict = proposals_output.model_dump()
 
     return {
         "messages":             result["messages"],
         "final_response":       final_response,
-        "rectification_output": rectification_output_dict,
-        "rectified_df":         rectified_df,
+        "rectification_output": rect_output_dict,
+        "rectified_df":         cleaned_df,
     }
-

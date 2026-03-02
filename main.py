@@ -116,6 +116,7 @@ class AristostatState(TypedDict, total=False):
     _rectification_failed:     list
     _rectification_df_json:    str
     _critic_response:          str
+    _methodologist_rerun: bool
 
     # ── Rectification loop ──
     rectification_attempt:     int
@@ -268,6 +269,7 @@ def node_intent_interpreter_confirm(state: AristostatState) -> AristostatState:
 def node_methodologist_run(state: AristostatState) -> AristostatState:
     """Runs methodologist LLM — no interrupts."""
     print("\n[NODE: methodologist_run] Starting...")
+    state = {**state, "_methodologist_rerun": False}
     print(f"[NODE: methodologist_run] intent_output: {state.get('intent_output')}")
     intent = state.get("intent_output", {})
     if intent.get("methodologist_bypass") and intent.get("requested_test"):
@@ -385,52 +387,35 @@ def node_methodologist_confirm(state: AristostatState) -> AristostatState:
 
     user_input = str(user_response).strip().lower()
 
-    # ── User confirmed ──
     if user_input in ("yes", "y"):
         return state
 
-    # ── User said no with no correction — stop ──
     if user_input in ("no", "n"):
         print("[NODE: methodologist_confirm] User stopped pipeline.")
         return {**state, "fatal_error": "User stopped pipeline after test selection."}
 
-    # ── User gave a correction — extract canonical test name first ──
+    # ── User gave a correction ──
     print(f"[NODE: methodologist_confirm] User corrected: {user_response}")
 
     from core.intent_engine import detect_explicit_test
-    # from Agents.methodologist import run_methodologist
-
-    # Try to extract a known test name from the user's free text
-    # e.g. "no, i said proceed with mlr" → "Multiple Linear Regression"
     canonical_test = detect_explicit_test(str(user_response))
+    requested_test = canonical_test if canonical_test else str(user_response)
+    print(f"[NODE: methodologist_confirm] Extracted test: {requested_test}")
 
-    if canonical_test:
-        print(f"[NODE: methodologist_confirm] Extracted test: {canonical_test}")
-        requested_test = canonical_test
-    else:
-        # No known test found — pass the raw string and let the LLM interpret it
-        print(f"[NODE: methodologist_confirm] No canonical test found, passing raw: {user_response}")
-        requested_test = str(user_response)
-
+    # ── Update intent_output with bypass flag and re-run signal ──
+    # Do NOT call run_methodologist here — route back to node_methodologist_run
+    # which already has the correct bypass logic with column extraction
     corrected_intent = {
         **state.get("intent_output", {}),
-        "requested_test":       requested_test,
-        "methodologist_bypass": True,
-        "intent_type":          "explicit_test",
+        "requested_test":        requested_test,
+        "methodologist_bypass":  True,
+        "intent_type":           "explicit_test",
     }
-
-    corrected_result = run_methodologist(
-        intent_output=corrected_intent,
-        profiler_output=state["profiler_output"],
-    )
-
-    corrected_methodologist = _serialize_output(corrected_result["methodologist_output"])
-    print(f"[NODE: methodologist_confirm] corrected test: {corrected_methodologist.get('selected_test')}")
 
     return {
         **state,
-        "methodologist_output":    corrected_methodologist,
-        "_methodologist_response": corrected_result["final_response"],
+        "intent_output":           corrected_intent,
+        "_methodologist_rerun":    True,   # signal to route back
     }
 
 # ── PREPROCESSOR ──
@@ -556,9 +541,13 @@ def node_assumption_checker_confirm(state: AristostatState) -> AristostatState:
 # ── RECTIFICATION STRATEGIST ──
 
 def node_rectification_strategist_run(state: AristostatState) -> AristostatState:
-    """Runs rectification strategist LLM — no interrupts."""
+    """
+    ReAct agent run — uses tools to analyse the violation and produce a recommendation.
+    No interrupts here. Agent calls tools in sequence:
+      check_attempt_limit → get_failure_context → get_violation_details
+      → get_proposed_solutions → reason → recommend
+    """
     print("\n[NODE: rectification_strategist_run] Starting...")
-    
 
     attempt = state.get("rectification_attempt", 1)
     phase   = state.get("rectification_phase", "pre_test")
@@ -566,7 +555,7 @@ def node_rectification_strategist_run(state: AristostatState) -> AristostatState
 
     rectified = _df_from_state(state.get("rectified_df"))
     cleaned   = _df_from_state(state["cleaned_df"])
-    df = rectified if rectified is not None else cleaned
+    df        = rectified if rectified is not None else cleaned
     print(f"[NODE: rectification_strategist_run] df shape: {df.shape if df is not None else 'None'}")
 
     checker = state.get("checker_output", {})
@@ -585,11 +574,11 @@ def node_rectification_strategist_run(state: AristostatState) -> AristostatState
         methodologist_output=state["methodologist_output"],
         rectification_attempt=attempt,
         max_attempts=3,
+        checker_output=checker,   # ← tools use this for VIF reasoning
+        critic_output=critic,     # ← tools use this for post-test reasoning
     )
-    print(f"[DEBUG] raw result rectification_output type: {type(result['rectification_output'])}")
-    print(f"[DEBUG] raw proposed_solutions: {result['rectification_output'].get('proposed_solutions')}")
+
     rect_output = _serialize_output(result["rectification_output"])
-    print(f"[DEBUG run] serialized proposed_solutions: {rect_output.get('proposed_solutions')}")
     print(f"[NODE: rectification_strategist_run] proposed_solutions: {len(rect_output.get('proposed_solutions', []))}")
 
     return {
@@ -601,8 +590,18 @@ def node_rectification_strategist_run(state: AristostatState) -> AristostatState
     }
 
 
+# ─────────────────────────────────────────────
+# NODE: rectification_strategist_confirm
+# ─────────────────────────────────────────────
+
 def node_rectification_strategist_confirm(state: AristostatState) -> AristostatState:
-    """Shows solutions to user and applies chosen one — contains the interrupt."""
+    """
+    Shows agent recommendation to user, waits for their choice,
+    then applies the solution via tools.
+
+    For drop_variable: fires a second interrupt to ask which variable(s),
+    then uses resolve_columns_to_drop tool (via store) to parse free text.
+    """
     print("\n[NODE: rectification_strategist_confirm] Starting...")
 
     attempt     = state.get("rectification_attempt", 1)
@@ -611,28 +610,39 @@ def node_rectification_strategist_confirm(state: AristostatState) -> AristostatS
     failed      = state.get("_rectification_failed", [])
     df          = _df_from_state(state.get("_rectification_df_json"))
 
+    # ── Show recommendation + options, wait for user ──
     user_response = interrupt({
         "message": state.get("_rectification_response", ""),
-        "prompt":  "Please choose an option (enter the number, or type 'proceed' to continue despite failures).",
+        "prompt":  "Enter a number, 'proceed' to continue despite failures, "
+                   "or describe which variable(s) to drop: ",
         "type":    "choose_solution",
         "options": rect_output.get("proposed_solutions", []),
     })
     print(f"[NODE: rectification_strategist_confirm] user response: {user_response}")
 
+    # ── Reinitialise store so tools work correctly in confirm node ──
+    from Tools.rectification_strategist import (
+        init_rectification_store,
+        get_rectification_store,
+        accept_violation_and_proceed,
+    )
+
+    init_rectification_store(
+        failed_assumptions=failed,
+        phase=phase,
+        cleaned_df=df,
+        methodologist_output=state["methodologist_output"],
+        rectification_attempt=attempt,
+        max_attempts=3,
+        checker_output=state.get("checker_output", {}),
+        critic_output=state.get("critic_output", {}),
+    )
+
+    # ── User chose to proceed despite failure ──
     if str(user_response).strip().lower() == "proceed":
-        from Tools.rectification_strategist import (
-            init_rectification_store, get_rectification_store,
-            accept_violation_and_proceed,
-        )
-        init_rectification_store(
-            failed_assumptions=failed,
-            phase=phase,
-            cleaned_df=df,
-            methodologist_output=state["methodologist_output"],
-            rectification_attempt=attempt,
-        )
         accept_violation_and_proceed.invoke({"violation_names": ",".join(failed)})
-        rect_output = _serialize_output(get_rectification_store()["rectification_output"].model_dump())
+        store       = get_rectification_store()
+        rect_output = _serialize_output(store["rectification_output"].model_dump())
         print("[NODE: rectification_strategist_confirm] User accepted violation.")
         return {
             **state,
@@ -641,67 +651,97 @@ def node_rectification_strategist_confirm(state: AristostatState) -> AristostatS
             "user_rectify_or_proceed": "proceed",
         }
 
+    # ── Resolve which solution the user chose ──
     solution_id = _resolve_solution_choice(user_response, rect_output.get("proposed_solutions", []))
-    # ── Special case: drop variable — ask which one ──
-    if solution_id == "multicollinearity_drop_variable":
-        ind_vars = state["methodologist_output"].get("independent_variables", [])
+    print(f"[NODE: rectification_strategist_confirm] resolved solution_id: {solution_id}")
 
-        # Find high-VIF variables from checker results to suggest to user
-        high_vif_vars = _get_high_vif_variables(state.get("checker_output", {}))
-        suggestion = f" (suggested: {', '.join(high_vif_vars)})" if high_vif_vars else ""
+    ind_vars = state["methodologist_output"].get("independent_variables", []).copy()
 
-        drop_response = interrupt({
-            "message": f"Which variable would you like to drop?{suggestion}\nAvailable predictors: {', '.join(ind_vars)}",
-            "prompt":  "Enter the exact variable name to drop: ",
-            "type":    "confirm",
-        })
+    # ── Detect drop intent ──
+    # solution_id is None when user typed free text like "drop age" (not a number or known id)
+    is_drop = solution_id == "multicollinearity_drop_variable"
+    if not is_drop and solution_id is None:
+        # Ask the LLM whether this free text contains variable names to drop
+        probe = _llm_resolve_drop_intent(str(user_response), ind_vars)
+        if probe:
+            is_drop = True
 
-        column_to_drop = str(drop_response).strip()
+    if is_drop:
+        # LLM maps user's words to exact column names — works for any dataset
+        columns_to_drop = _llm_resolve_drop_intent(str(user_response), ind_vars)
+        print(f"[NODE: rectification_strategist_confirm] columns_to_drop: {columns_to_drop}")
 
-        # Inject the chosen column into the solution details
-        rect_output_modified = dict(rect_output)
-        for sol in rect_output_modified.get("proposed_solutions", []):
-            if isinstance(sol, dict) and sol.get("solution_id") == "multicollinearity_drop_variable":
-                sol["action_details"] = {"column": column_to_drop}
-            elif hasattr(sol, "solution_id") and sol.solution_id == "multicollinearity_drop_variable":
-                sol.action_details["column"] = column_to_drop
+        # If user typed the option number with no variable name — ask which one
+        if not columns_to_drop:
+            high_vif   = _get_high_vif_variables(state.get("checker_output", {}))
+            suggestion = f" (highest VIF: {', '.join(high_vif)})" if high_vif else ""
+            drop_response = interrupt({
+                "message": (
+                    f"Which variable(s) would you like to drop?{suggestion}\n"
+                    f"Available predictors: {', '.join(ind_vars)}"
+                ),
+                "prompt": "Which variable(s) to drop? ",
+                "type":   "confirm",
+            })
+            columns_to_drop = _llm_resolve_drop_intent(str(drop_response), ind_vars)
+            print(f"[NODE: rectification_strategist_confirm] columns after follow-up: {columns_to_drop}")
 
-        # Also update methodologist_output to remove the dropped variable
-        updated_ind_vars = [v for v in ind_vars if v != column_to_drop]
+        if not columns_to_drop:
+            columns_to_drop = _get_high_vif_variables(state.get("checker_output", {}))[:1]
+            print(f"[NODE: rectification_strategist_confirm] fallback to highest VIF: {columns_to_drop}")
+
+        # ── Only update methodologist_output — DataFrame stays untouched ──
+        # assumption_checker and statistician both do df[independent_variables],
+        # so removing the name here is all that's needed to drop it from the model.
+        updated_ind_vars = [v for v in ind_vars if v not in columns_to_drop]
         updated_methodologist = {
             **state["methodologist_output"],
             "independent_variables": updated_ind_vars,
         }
-    print(f"[NODE: rectification_strategist_confirm] chosen solution_id: {solution_id}")
-    print(f"[DEBUG] proposed_solutions: {rect_output.get('proposed_solutions')}")
-    print(f"[DEBUG] user_response raw: {repr(user_response)}")
-    solution_id = _resolve_solution_choice(user_response, rect_output.get("proposed_solutions", []))
-    print(f"[DEBUG] resolved solution_id: {solution_id}")
-    from Tools.rectification_strategist import init_rectification_store, get_rectification_store
-    from core.rectification_engine import build_rectification_output
-    from Schemas.rectification_strategist import RectificationPhase
+        print(f"[NODE: rectification_strategist_confirm] removed: {columns_to_drop}")
+        print(f"[NODE: rectification_strategist_confirm] remaining: {updated_ind_vars}")
 
-    ph = RectificationPhase(phase)
-    rectified_df, applied_output = build_rectification_output(
-        failed_assumptions=failed,
-        phase=ph,
-        chosen_solution_id=solution_id,
-        df=df,
-        dependent_var=state["methodologist_output"].get("dependent_variable"),
-        independent_vars=state["methodologist_output"].get("independent_variables", []),
-        rectification_attempt=attempt,
-        max_attempts=3,
-    )
+        from core.rectification_engine import build_rectification_output
+        from Schemas.rectification_strategist import RectificationPhase
+        ph = RectificationPhase(phase)
+        _, applied_output = build_rectification_output(
+            failed_assumptions=failed,
+            phase=ph,
+            chosen_solution_id="multicollinearity_drop_variable",
+            df=df,
+            dependent_var=state["methodologist_output"].get("dependent_variable"),
+            independent_vars=updated_ind_vars,
+            rectification_attempt=attempt,
+            max_attempts=3,
+        )
+        rectified_df = df  # DataFrame unchanged
+
+    else:
+        # ── All other solutions: test_switch, transform, correction ──
+        from core.rectification_engine import build_rectification_output
+        from Schemas.rectification_strategist import RectificationPhase
+        ph = RectificationPhase(phase)
+        rectified_df, applied_output = build_rectification_output(
+            failed_assumptions=failed,
+            phase=ph,
+            chosen_solution_id=solution_id,
+            df=df,
+            dependent_var=state["methodologist_output"].get("dependent_variable"),
+            independent_vars=ind_vars,
+            rectification_attempt=attempt,
+            max_attempts=3,
+        )
+        updated_methodologist = state["methodologist_output"]
+        if applied_output and applied_output.new_test:
+            updated_methodologist = {
+                **state["methodologist_output"],
+                "selected_test": applied_output.new_test,
+            }
+
     print(f"[NODE: rectification_strategist_confirm] rectified_df shape: {rectified_df.shape if rectified_df is not None else 'None'}")
-    print(f"[NODE: rectification_strategist_confirm] new_test: {applied_output.new_test}")
+    print(f"[NODE: rectification_strategist_confirm] new_test: {applied_output.new_test if applied_output else None}")
 
-    rect_serialized = _serialize_output(applied_output)
-    updated_methodologist = state["methodologist_output"]
-    if applied_output.new_test:
-        updated_methodologist = {
-            **state["methodologist_output"],
-            "selected_test": applied_output.new_test,
-        }
+    rect_serialized = _serialize_output(applied_output) if applied_output else {}
 
     return {
         **state,
@@ -711,6 +751,7 @@ def node_rectification_strategist_confirm(state: AristostatState) -> AristostatS
         "rectification_attempt":   attempt + 1,
         "user_rectify_or_proceed": "rectified",
     }
+
 
 
 # ── STATISTICIAN ──
@@ -864,6 +905,8 @@ def route_after_intent(state: AristostatState) -> str:
 def route_after_methodologist(state: AristostatState) -> str:
     if state.get("fatal_error"):
         return END
+    if state.get("_methodologist_rerun"):
+        return "methodologist_run"   # loop back to run node
     return "preprocessor_run"
 
 
@@ -929,6 +972,7 @@ def _resolve_combination_choice(user_response: Any, combinations: list) -> str:
         return str(user_response)
 
 
+# REPLACE WITH
 def _resolve_solution_choice(user_response: Any, solutions: list) -> str | None:
     response = str(user_response).strip()
     try:
@@ -936,21 +980,69 @@ def _resolve_solution_choice(user_response: Any, solutions: list) -> str | None:
         if 0 <= idx < len(solutions):
             sol = solutions[idx]
             return sol.get("solution_id") if isinstance(sol, dict) else sol.solution_id
+        return None
     except ValueError:
-        return response
-    return None
+        pass
+    # Only return if it's an exact known solution_id — otherwise None
+    known_ids = [
+        (sol.get("solution_id") if isinstance(sol, dict) else sol.solution_id)
+        for sol in solutions
+    ]
+    return response if response in known_ids else None
 
 def _get_high_vif_variables(checker_output: dict) -> list[str]:
-    """Extract variable names with high VIF from checker results for user suggestion."""
+    """
+    Parses checker results to find variable names flagged with VIF >= 10.
+    Used as a fallback suggestion in the confirm node.
+    """
+    import re
     for result in checker_output.get("results", []):
-        if "multicollinearity" in result.get("name", "").lower() or \
-           "vif" in result.get("plain_reason", "").lower():
-            reason = result.get("plain_reason", "")
-            # Parse "VIF scores: {Age: 27.14 (≥10), Years of Experience: 27.24 (≥10), ...}"
-            import re
-            high_vif = re.findall(r"([\w\s]+?):\s*[\d.]+\s*\(≥10\)", reason)
-            return [v.strip() for v in high_vif]
+        name   = result.get("name", "").lower()
+        reason = result.get("plain_reason", "")
+        if "multicollinear" in name or "vif" in reason.lower():
+            matches = re.findall(r"([A-Za-z][\w\s]*):\s*[\d.,]+\s*\([^)]*10\)", reason)
+            return [m.strip() for m in matches if m.strip()]
     return []
+
+
+def _llm_resolve_drop_intent(user_text: str, available_columns: list[str]) -> list[str]:
+    import json as _json
+    
+    # ── First try simple string matching — no LLM needed ──
+    user_lower = user_text.lower()
+    matched = []
+    for col in available_columns:
+        if col.lower() in user_lower:
+            matched.append(col)
+        # Also check partial matches e.g. "yoe" → "Years of Experience"
+        elif any(word in user_lower for word in col.lower().split()):
+            matched.append(col)
+    
+    if matched:
+        print(f"[_llm_resolve_drop_intent] string match found: {matched}")
+        return matched
+
+    # ── Fallback to LLM only if string matching failed ──
+    try:
+        from langchain_groq import ChatGroq
+        from langchain_core.messages import HumanMessage
+        
+        llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0)
+
+        prompt = f"""Available columns: {available_columns}
+User said: "{user_text}"
+
+Which columns does the user want to drop? Return ONLY a JSON array of exact column names.
+If none, return [].
+No explanation. No markdown."""
+
+        response = llm.invoke([HumanMessage(content=prompt)])
+        raw      = response.content.strip().strip("```json").strip("```").strip()
+        parsed   = _json.loads(raw)
+        return [c for c in parsed if c in available_columns]
+    except Exception as e:
+        print(f"[_llm_resolve_drop_intent] failed: {e}")
+        return []
 
 # ─────────────────────────────────────────────
 # GRAPH CONSTRUCTION

@@ -22,7 +22,7 @@ from scipy import stats
 from Utils.critic_requirements_registry import POST_TEST_ASSUMPTION_REGISTRY
 from Schemas.assumption_checker import AssumptionResult, AssumptionStatus
 from Schemas.critic import ModelCriticOutput
-
+from core.statistician_engine import _encode_features
 
 # ─────────────────────────────────────────────
 # CONSTANTS
@@ -45,20 +45,33 @@ def _extract_residuals(
 ) -> np.ndarray | None:
     """
     Extracts residuals from a fitted model.
-    Handles statsmodels OLS (has .resid) and sklearn pipelines (compute manually).
+
+    - statsmodels OLS: has .resid directly
+    - sklearn Pipeline (Ridge, Lasso): re-encode features using stored
+      feature_names_in_ (set during training) then compute residuals manually
     """
-    # statsmodels OLS
+    # ── statsmodels OLS — residuals available directly ──
     if hasattr(fitted_model, "resid"):
         return np.array(fitted_model.resid)
 
-    # sklearn Pipeline (Ridge, Lasso)
+    # ── sklearn Pipeline (Ridge, Lasso) ──
     if hasattr(fitted_model, "predict"):
         try:
-            X = df[independent_vars].dropna()
+            # Re-encode categorical features the same way training did
+            X = _encode_features(df, independent_vars)
+
+            # If we stored the exact encoded column order during training, use it
+            # This handles cases where get_dummies produces columns in different order
+            if hasattr(fitted_model, "_aristostat_feature_names"):
+                X = X[fitted_model._aristostat_feature_names]
+
+            X = X.dropna()
             y = df[dependent_var].loc[X.index].values
             y_pred = fitted_model.predict(X)
             return y - y_pred
-        except Exception:
+
+        except Exception as e:
+            print(f"[_extract_residuals] failed: {e}")
             return None
 
     return None
