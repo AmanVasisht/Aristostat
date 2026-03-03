@@ -771,7 +771,7 @@ def run_pca(
         test_name="Principal Component Analysis",
         test_family=TestFamily.DIMENSIONALITY,
         dimensionality_result=result,
-        n_observations=len(X),
+        n_observations=len(X_encoded),
         columns_used={"variables": ", ".join(independent_vars)},
         model_available_in_memory=True,
     ), pca

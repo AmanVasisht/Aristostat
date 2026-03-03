@@ -914,14 +914,25 @@ def route_after_model_critic(state: AristostatState) -> str:
 
 def _resolve_combination_choice(user_response: Any, combinations: list) -> str:
     try:
-        idx  = int(str(user_response).strip()) - 1
+        idx = int(str(user_response).strip()) - 1
         combo = combinations[idx]
-        cols  = combo.get("columns", [])
-        goal  = combo.get("suggested_goal", "")
-        return f"Please run {goal} analysis on {' and '.join(cols)}"
+        cols = combo.get("columns", [])
+        goal = combo.get("suggested_goal", "")
+
+        if goal == "relationship" and len(cols) == 2:
+            return f"Analyze relationship between {cols[0]} and {cols[1]}"
+
+        if goal == "inference" and len(cols) == 2:
+            return f"Compare {cols[0]} across {cols[1]}"
+
+        if goal == "prediction" and len(cols) >= 2:
+            return f"Study effect of {cols[1]} on {cols[0]}"
+
+        # fallback
+        return f"Analyze {', '.join(cols)}"
+
     except (ValueError, IndexError):
         return str(user_response)
-
 
 # REPLACE WITH
 def _resolve_solution_choice(user_response: Any, solutions: list) -> str | None:
