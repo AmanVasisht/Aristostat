@@ -117,6 +117,7 @@ class AristostatState(TypedDict, total=False):
     _rectification_df_json:    str
     _critic_response:          str
     _methodologist_rerun: bool
+    _exit_analysis: bool
 
     # ── Rectification loop ──
     rectification_attempt:     int
@@ -145,6 +146,7 @@ def node_data_profiler(state: AristostatState) -> AristostatState:
         filepath=state["csv_path"],
         user_message=state.get("user_query"),
     )
+    print("aaaaaaaaaaaaaaa",result)
     print(f"[NODE: data_profiler] profiler_output keys: {list(result.get('profiler_output', {}).keys())}")
     print(f"[NODE: data_profiler] fatal_errors: {result.get('profiler_output', {}).get('fatal_errors')}")
     print(f"[NODE: data_profiler] warnings count: {len(result.get('profiler_output', {}).get('warnings', []))}")
@@ -153,15 +155,17 @@ def node_data_profiler(state: AristostatState) -> AristostatState:
 
     user_response = interrupt({
         "message": result["final_response"],
-        "prompt":  "Shall I proceed with the analysis? (yes/no)",
+        "prompt":  "To begin with, here is the detailed descriptive summary of your data. Do you want me to proceed further? (yes/no)",
         "type":    "confirm",
     })
 
+    profiler_serialized = _serialize_output(result["profiler_output"])
     if str(user_response).strip().lower() not in ("yes", "y"):
         print("[NODE: data_profiler] User stopped pipeline.")
-        return {**state, "fatal_error": "User stopped pipeline after data profiling."}
-
-    profiler_serialized = _serialize_output(result["profiler_output"])
+        return {**state, 
+                "profiler_output":profiler_serialized,
+                "_exit_analysis":True
+                }
     print(f"[NODE: data_profiler] profiler_serialized keys: {list(profiler_serialized.keys())}")
     print("The final state in data profiler is:", state)
     print("The final result in data profiler is:", result)
@@ -809,11 +813,13 @@ def node_model_critic_confirm(state: AristostatState) -> AristostatState:
 def node_final_report(state: AristostatState) -> AristostatState:
     """Generates the final report."""
     print("\n[NODE: final_report] Starting...")
-    print(f"[NODE: final_report] statistician_output keys: {list(state.get('statistician_output', {}).keys())}")
-    print(f"[NODE: final_report] checker_output keys: {list(state.get('checker_output', {}).keys())}")
-    print(f"[NODE: final_report] critic_output present: {state.get('critic_output') is not None}")
-    print(f"[NODE: final_report] rectification_output present: {state.get('rectification_output') is not None}")
-    
+    try:
+        print(f"[NODE: final_report] statistician_output keys: {list(state.get('statistician_output', {}).keys())}")
+        print(f"[NODE: final_report] checker_output keys: {list(state.get('checker_output', {}).keys())}")
+        print(f"[NODE: final_report] critic_output present: {state.get('critic_output') is not None}")
+        print(f"[NODE: final_report] rectification_output present: {state.get('rectification_output') is not None}")
+    except:
+        pass
     try:
         result = run_final_report(
             original_query=state["user_query"],
@@ -848,6 +854,8 @@ def node_final_report(state: AristostatState) -> AristostatState:
 def route_after_profiler(state: AristostatState) -> str:
     if state.get("fatal_error"):
         return END
+    if state.get("_exit_analysis"):
+        return "final_report"
     return "intent_interpreter_run"
 
 
@@ -1092,6 +1100,10 @@ def run_aristostat(
         "critic_output":           None,
         "rectified_df":            None,
         "user_rectify_or_proceed": "proceed",
+        "preprocessor_output":  None,
+        "methodologist_output": None,
+        "checker_output": None,
+        "statistician_output": None,
     }
     return graph.invoke(initial_state, config=config)
 
