@@ -24,6 +24,9 @@ from Schemas.assumption_checker import AssumptionResult, AssumptionStatus
 from Schemas.critic import ModelCriticOutput
 from core.statistician_engine import _encode_features
 
+# Statistical tests/models
+from statsmodels.stats.stattools import durbin_watson
+from statsmodels.stats.diagnostic import het_breuschpagan
 # ─────────────────────────────────────────────
 # CONSTANTS
 # ─────────────────────────────────────────────
@@ -71,7 +74,6 @@ def _extract_residuals(
             return y - y_pred
 
         except Exception as e:
-            print(f"[_extract_residuals] failed: {e}")
             return None
 
     return None
@@ -134,7 +136,6 @@ def check_homoscedasticity_bp(
     # statsmodels OLS — use proper Breusch-Pagan
     if hasattr(fitted_model, "resid") and hasattr(fitted_model, "model"):
         try:
-            from statsmodels.stats.diagnostic import het_breuschpagan
             _, p, _, _ = het_breuschpagan(fitted_model.resid, fitted_model.model.exog)
             passed = p >= alpha
             return AssumptionResult(
@@ -191,7 +192,7 @@ def check_autocorrelation_dw(
     DW < 1.5 → positive autocorrelation (problem).
     DW > 2.5 → negative autocorrelation (problem).
     """
-    from statsmodels.stats.stattools import durbin_watson
+    
 
     dw = float(durbin_watson(residuals))
 

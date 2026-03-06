@@ -56,7 +56,6 @@ def run_data_profiler(filepath: str, user_message: str = None) -> dict:
     3. Call LLM once for summary — single call, no tool loop
     """
     # Step 1 — Load
-    print("nnnnnnnnnnnnnnnnnnnnn")
     df = pd.read_csv(filepath)
 
     # Step 2 — Profile (pure Python, no LLM)

@@ -690,7 +690,6 @@ def generate_docx_report() -> str:
         output_path = os.path.join(output_dir, "aristostat_report.docx")
         doc.save(output_path)
 
-        print(f"[generate_docx_report] Saved to: {output_path}")
         report.docx_path      = output_path
         report.docx_generated = True
         _report_store["report_output"] = report
@@ -699,7 +698,6 @@ def generate_docx_report() -> str:
 
     except Exception as e:
         import traceback
-        print(f"[generate_docx_report] EXCEPTION: {traceback.format_exc()}")
         return f"ERROR: Could not generate docx — {str(e)}"
 
 

@@ -106,7 +106,6 @@ def run_statistician(
 
     except Exception as e:
         import traceback
-        print(f"[STATISTICIAN] ERROR: {str(e)}")
         print(traceback.format_exc())       # ← shows full stack trace
         final_response = f"Test execution failed: {str(e)}"
 
