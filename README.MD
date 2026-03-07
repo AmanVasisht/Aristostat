@@ -208,6 +208,7 @@ The core pipeline is functional across the currently supported test suite. Activ
 
 - **Expanded test library** — survival analysis, mixed-effects models, time series tests, non-parametric alternatives for multi-factor designs
 - **Graph complexity** — handling multi-outcome analyses, nested pipelines, and composite research questions in a single run
+- **Conversational history** — Add reducers especially for SQL agent or rectification agent, as this can save history of their loops and enhance the final report agent output.
 - **Code optimisation** — parallel assumption checks, caching profiler output across sessions, reducing redundant LLM calls
 - **Deployment** — containerisation with Docker, CI/CD pipeline, cloud hosting (AWS / GCP)
 - **Guardrails** — input validation, hallucination detection on statistical interpretation, confidence scoring on test selection
