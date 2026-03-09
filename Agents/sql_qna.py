@@ -39,28 +39,12 @@ from Tools.sql_qna import (
     execute_sql,
     fix_and_retry,
 )
+from Prompts.sql_qna import SQL_QNA_SYSTEM_PROMPT
 
 
 # ─────────────────────────────────────────────
 # CONSTANTS
 # ─────────────────────────────────────────────
-
-_SYSTEM_PROMPT = """You are a precise SQL data analyst. Your job is to answer the user's question about their dataset by writing and executing DuckDB SQL.
-
-Follow this exact sequence every time:
-1. Call get_schema() to understand the table structure and exact column names
-2. Write a DuckDB SQL query using 'data' as the table name
-3. Call execute_sql() with your query
-4. If execute_sql() returns a SQL ERROR, call fix_and_retry() ONCE with the original query and error message
-5. Once you have results, provide a clear and direct plain English explanation
-
-Rules:
-- ALWAYS call get_schema() first — never assume column names
-- ALWAYS use 'data' as the table name in every query
-- Use DuckDB SQL syntax (supports most standard SQL)
-- If results are empty, explain what that means in plain English
-- Only report what the query actually returned — never fabricate data
-- Be concise and direct — answer the question, do not over-explain"""
 
 _MAX_ITERATIONS = 6
 
@@ -108,7 +92,7 @@ def run_sql_qna_agent(
 
     # ── Conversation history for ReAct loop ──
     messages = [
-        {"role": "system", "content": _SYSTEM_PROMPT},
+        {"role": "system", "content": SQL_QNA_SYSTEM_PROMPT},
         {"role": "user",   "content": user_question},
     ]
 

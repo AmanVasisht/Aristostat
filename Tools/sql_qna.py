@@ -30,6 +30,8 @@ from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage
 from langchain_groq import ChatGroq
 
+from Prompts.sql_qna import SQL_FIX_PROMPT_TEMPLATE
+
 
 # ─────────────────────────────────────────────
 # MODULE-LEVEL STORE
@@ -191,20 +193,11 @@ def fix_and_retry(original_query: str, error_message: str) -> str:
 
     llm = ChatGroq(model="qwen/qwen3-32b", temperature=0)
 
-    fix_prompt = f"""You wrote this DuckDB SQL query:
-{original_query}
-
-It failed with this error:
-{error_message}
-
-The table schema is:
-{schema_info}
-
-Fix the query and return ONLY the corrected SQL.
-Rules:
-- Table name must be 'data'
-- Use valid DuckDB SQL syntax
-- No explanation, no markdown, no backticks — raw SQL only"""
+    fix_prompt = SQL_FIX_PROMPT_TEMPLATE.format(
+        original_query=original_query,
+        error_message=error_message,
+        schema_info=schema_info,
+    )
 
     response    = llm.invoke([HumanMessage(content=fix_prompt)])
     fixed_query = response.content.strip().strip("```sql").strip("```").strip()
